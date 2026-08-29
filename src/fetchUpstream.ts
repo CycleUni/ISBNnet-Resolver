@@ -1,4 +1,4 @@
-const USER_AGENT = 'CycleUni-ISBNnet-Resolver/1.0';
+const USER_AGENT = 'UniBooks-ISBNnet-Resolver/1.0';
 const BASE_SEARCH_URL = 'https://isbn.ncl.edu.tw/NEW_ISBNNet/H30_SearchBooks.php';
 const DEFAULT_TIMEOUT_MS = 8000;
 const MAX_REDIRECT_HOPS = 5;

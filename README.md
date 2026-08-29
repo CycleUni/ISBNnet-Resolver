@@ -1,6 +1,6 @@
 # ISBNnet Resolver
 
-A standalone Cloudflare Worker microservice for the [CycleUni](https://github.com/CycleUni) project (used-textbook marketplace). Its sole responsibility is looking up book metadata from Taiwan's National Central Library ISBN-net ([https://isbn.ncl.edu.tw/NEW_ISBNNet/](https://isbn.ncl.edu.tw/NEW_ISBNNet/)) by scraping search results for exact ISBN queries and returning clean JSON.
+A standalone Cloudflare Worker microservice for the [UniBooks](https://github.com/CycleUni) project (used-textbook marketplace). Its sole responsibility is looking up book metadata from Taiwan's National Central Library ISBN-net ([https://isbn.ncl.edu.tw/NEW_ISBNNet/](https://isbn.ncl.edu.tw/NEW_ISBNNet/)) by scraping search results for exact ISBN queries and returning clean JSON.
 
 > **Disclaimer**: This microservice is an unofficial, best-effort scraper of a public government website and may break if upstream markup or redirect flows change. The HTML parsing logic is strictly isolated in [`src/parse.ts`](src/parse.ts) to facilitate quick patching and test maintenance.
 

@@ -48,8 +48,8 @@ Returned when the search confirmed 0 matching records. Cached for 1 hour (`Cache
 }
 ```
 
-#### Invalid ISBN Response (`400 Bad Request`)
-Returned when the provided ISBN fails format validation (neither a valid 10-character nor 13-digit pattern).
+#### Invalid ISBN Response (`404 Not Found`)
+Returned when the provided ISBN fails format validation (neither a valid 10-character nor 13-digit pattern). Cached for 24 hours (`Cache-Control: public, max-age=86400`) to prevent abuse at the edge.
 
 ```json
 {
@@ -65,6 +65,21 @@ Returned when upstream network requests, redirect chains, or parsing encounter u
   "error": "upstream_error"
 }
 ```
+
+---
+
+## Cloudflare Cache Rules (Mandatory for Cost Protection)
+
+While this worker uses `caches.default` to cache valid and invalid responses programmatically, Cloudflare CDN does not automatically store these responses to bypass Worker invocation. To prevent malicious bots or high-volume scraping from exhausting your Worker invocation quota (even for cached 404 errors), you **must** configure a Cache Rule in the Cloudflare Dashboard:
+
+1. Go to your Cloudflare Dashboard for the domain bound to this worker.
+2. Navigate to **Caching** → **Cache Rules**.
+3. Create a new rule: `Cache ISBNnet Resolver`
+4. Set the condition: `URI Path` `starts with` `/isbn/`
+5. Set Cache eligibility to: `Eligible for cache`
+6. Set Edge TTL to: `Use cache-control header if present`
+
+This configuration ensures that Cloudflare's outermost CDN edge respects the `Cache-Control` headers emitted by this worker, completely bypassing worker invocation on subsequent identical requests.
 
 ---
 

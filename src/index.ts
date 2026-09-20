@@ -41,14 +41,14 @@ export default {
     const isbnMatch = pathname.match(/^\/isbn\/(.+)$/);
     if (isbnMatch) {
       if (request.method !== 'GET') {
-        return jsonResponse({ error: 'method_not_allowed' }, 405);
+        return jsonResponse({ error: 'method_not_allowed' }, 405, 86400);
       }
 
       const rawIsbnParam = decodeURIComponent(isbnMatch[1]);
       const normalizedIsbn = rawIsbnParam.replace(/[-\s]/g, '').toUpperCase();
 
       if (!isValidIsbn(normalizedIsbn)) {
-        return jsonResponse({ error: 'invalid_isbn' }, 400);
+        return jsonResponse({ error: 'invalid_isbn' }, 404, 86400);
       }
 
       // Cache lookup using Cloudflare Workers Cache API
@@ -94,6 +94,6 @@ export default {
       return successResponse;
     }
 
-    return jsonResponse({ error: 'not_found' }, 404);
+    return jsonResponse({ error: 'not_found' }, 404, 86400);
   },
 };

@@ -45,6 +45,7 @@ describe('routing', () => {
   it('404s an unknown path', async () => {
     const res = await call('/');
     expect(res.status).toBe(404);
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
     expect(upstream).not.toHaveBeenCalled();
   });
 
@@ -52,6 +53,7 @@ describe('routing', () => {
     const res = await call('/isbn/9789571234567', { method: 'POST' });
     expect(res.status).toBe(405);
     await expect(res.json()).resolves.toEqual({ error: 'method_not_allowed' });
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
     expect(upstream).not.toHaveBeenCalled();
   });
 });
@@ -64,10 +66,11 @@ describe('ISBN validation', () => {
     ['letters', 'abcdefghij'],
     ['X in an ISBN-13', '978957123456X'],
     ['empty after stripping', '---'],
-  ])('rejects %s with 400 and never calls upstream', async (_label, isbn) => {
+  ])('rejects %s with 404 and never calls upstream', async (_label, isbn) => {
     const res = await call(`/isbn/${encodeURIComponent(isbn)}`);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     await expect(res.json()).resolves.toEqual({ error: 'invalid_isbn' });
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400');
     expect(upstream).not.toHaveBeenCalled();
   });
 

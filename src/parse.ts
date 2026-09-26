@@ -9,11 +9,50 @@ export interface ParsedBook {
   isbn: string;
 }
 
+// Real ISBNnet pages nest a few dozen elements deep. Cheerio's parser costs
+// O(depth) per tag, so a page of 100k unclosed <div>s takes about a minute of
+// CPU. Refuse anything this deep before handing it over.
+const MAX_NESTING_DEPTH = 1000;
+
+const VOID_ELEMENTS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+/**
+ * Linear, approximate count of how deep the open tags nest. It ignores the
+ * implied closes the HTML spec allows (e.g. `<p>`, `<li>`), so it overcounts.
+ * That's fine for a limit this far above any real page.
+ */
+function maxNestingDepth(html: string): number {
+  const stripped = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '');
+  let depth = 0;
+  let max = 0;
+  for (const m of stripped.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
+    const [, closing, name, selfClosing] = m;
+    if (closing) {
+      depth = Math.max(0, depth - 1);
+    } else if (!selfClosing && !VOID_ELEMENTS.has(name.toLowerCase())) {
+      depth++;
+      if (depth > max) max = depth;
+    }
+  }
+  return max;
+}
+
 /**
  * Pure function to parse the HTML returned by ISBNnet results page.
  * Returns ParsedBook if a result was found, or null if no results match.
+ * Throws if the HTML is too deeply nested to parse in reasonable time.
  */
 export function parseSearchResult(html: string, requestedIsbn: string): ParsedBook | null {
+  const depth = maxNestingDepth(html);
+  if (depth > MAX_NESTING_DEPTH) {
+    throw new Error(`HTML nests ${depth} elements deep, over the limit of ${MAX_NESTING_DEPTH}`);
+  }
+
   const $ = cheerio.load(html);
 
   // Check result count (e.g. "顯示查詢結果 ( 找到 0 筆 )" or "找到 1 筆")

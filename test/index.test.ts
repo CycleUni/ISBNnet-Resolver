@@ -135,7 +135,9 @@ describe('lookup', () => {
     // A redesign upstream, or an error page served with status 200.
     upstream.mockResolvedValue('<html>' + '<div>'.repeat(100000));
     const res = await call('/isbn/9789571234567');
-    expect([200, 404, 502]).toContain(res.status);
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({ error: 'upstream_error' });
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
   });
 
   it('never caches an error response', async () => {

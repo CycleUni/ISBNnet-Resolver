@@ -151,4 +151,21 @@ describe('parseSearchResult', () => {
       expect(coverOf(undefined)).toBe('');
     });
   });
+
+  describe('pathological markup', () => {
+    it('refuses deeply nested HTML quickly instead of parsing it', () => {
+      // Parsing costs O(depth) per tag; 100k unclosed divs is about a minute.
+      const start = Date.now();
+      expect(() => parseSearchResult('<html>' + '<div>'.repeat(100000), ISBN)).toThrow(/nests/);
+      expect(Date.now() - start).toBeLessThan(1000);
+    });
+
+    it('does not count void, self-closing, comment or script tags as nesting', () => {
+      const noise = '<br><img src="x"><span/>'.repeat(2000) +
+        '<!--' + '<div>'.repeat(2000) + '-->' +
+        '<script>' + '"<div>"'.repeat(2000) + '</script>';
+      const html = resultsPage({ count: 1, rows: [row({ title: 'T' })] }).replace('<body>', '<body>' + noise);
+      expect(parseSearchResult(html, ISBN)!.title).toBe('T');
+    });
+  });
 });

@@ -146,3 +146,39 @@ describe('lookup', () => {
     expect(res.headers.get('Cache-Control')).toBe('no-store');
   });
 });
+
+describe('shared secret', () => {
+  const locked = { RESOLVER_SECRET: 'resolver-test-secret' };
+  const lookup = (headers?: Record<string, string>) =>
+    worker.fetch(new Request('https://resolver.example/isbn/9786264048668', { headers }), locked, ctx);
+
+  it('refuses a lookup without the secret once one is set', async () => {
+    const res = await lookup();
+    expect(res.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('refuses a wrong secret', async () => {
+    const res = await lookup({ 'X-Resolver-Secret': 'resolver-test-secreX' });
+    expect(res.status).toBe(401);
+  });
+
+  it('serves a lookup carrying the secret', async () => {
+    upstream.mockResolvedValue(FOUND_HTML);
+    const res = await lookup({ 'X-Resolver-Secret': 'resolver-test-secret' });
+    expect(res.status).toBe(200);
+  });
+
+  it('keeps the health check open', async () => {
+    const res = await worker.fetch(new Request('https://resolver.example/health'), locked, ctx);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('malformed path', () => {
+  it('answers a broken % escape as an invalid ISBN, not a 500', async () => {
+    const res = await call('/isbn/%E0%A4%A');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'invalid_isbn' });
+  });
+});

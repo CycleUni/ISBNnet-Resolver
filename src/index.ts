@@ -2,7 +2,22 @@ import { parseSearchResult, ParsedBook } from './parse';
 import { fetchIsbnNetHtml } from './fetchUpstream';
 
 export interface Env {
-  // Add environment variables / bindings here if needed in the future
+  // Shared with the UniBooks backend, its only caller (set with `wrangler
+  // secret put RESOLVER_SECRET`). When set, an ISBN lookup must carry it in
+  // X-Resolver-Secret; unset, lookups stay open, so the backend can start
+  // sending it before the Worker starts requiring it.
+  RESOLVER_SECRET?: string;
+}
+
+/** Equal-length comparison that does not stop at the first differing byte. */
+function secretMatches(provided: string | null, expected: string): boolean {
+  if (provided === null) return false;
+  const a = new TextEncoder().encode(provided);
+  const b = new TextEncoder().encode(expected);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 const CACHE_TTL_FOUND = 2592000; // 30 days in seconds
@@ -44,7 +59,20 @@ export default {
         return jsonResponse({ error: 'method_not_allowed' }, 405, 86400);
       }
 
-      const rawIsbnParam = decodeURIComponent(isbnMatch[1]);
+      // Without it anyone could use this Worker to send NCL a stream of
+      // uncached lookups (each up to five upstream fetches) from Cloudflare's
+      // addresses, and get those addresses blocked.
+      if (env.RESOLVER_SECRET && !secretMatches(request.headers.get('X-Resolver-Secret'), env.RESOLVER_SECRET)) {
+        return jsonResponse({ error: 'unauthorized' }, 401);
+      }
+
+      let rawIsbnParam: string;
+      try {
+        rawIsbnParam = decodeURIComponent(isbnMatch[1]);
+      } catch {
+        // A malformed % escape: no ISBN in it, so the same answer as any other.
+        return jsonResponse({ error: 'invalid_isbn' }, 404, 86400);
+      }
       const normalizedIsbn = rawIsbnParam.replace(/[-\s]/g, '').toUpperCase();
 
       if (!isValidIsbn(normalizedIsbn)) {

@@ -25,6 +25,8 @@ A standalone Cloudflare Worker microservice for the [UniBooks](https://github.co
 
 Exact ISBN-10 or ISBN-13 lookup. Hyphens (`-`) and whitespace in `:isbn` are automatically stripped, and check digits (`X`) are uppercased.
 
+When the Worker has a `RESOLVER_SECRET`, the request must send the same value in `X-Resolver-Secret`, or it gets `401 {"error": "unauthorized"}`. The UniBooks backend sends its `ISBNNET_RESOLVER_SECRET` there. `/health` stays open.
+
 #### Success Response (`200 OK`)
 Cached in Cloudflare Workers Cache API for 30 days (`Cache-Control: public, max-age=2592000`).
 
@@ -117,4 +119,9 @@ npx wrangler dev
 ### Deploy to Cloudflare Workers
 ```bash
 npx wrangler deploy
+```
+
+To lock lookups to the backend, give it `ISBNNET_RESOLVER_SECRET` and deploy that first, then set the same value here:
+```bash
+npx wrangler secret put RESOLVER_SECRET
 ```

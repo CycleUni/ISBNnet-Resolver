@@ -148,7 +148,7 @@ describe('lookup', () => {
 });
 
 describe('shared secret', () => {
-  const locked = { RESOLVER_SECRET: 'resolver-test-secret' };
+  const locked = { ISBNNET_RESOLVER_SECRET: 'resolver-test-secret' };
   const lookup = (headers?: Record<string, string>) =>
     worker.fetch(new Request('https://resolver.example/isbn/9786264048668', { headers }), locked, ctx);
 

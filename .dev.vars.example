@@ -11,5 +11,5 @@
 # When set, an /isbn/ lookup without the same value gets 401; /health stays
 # open. Must exactly match UniBooks-BE's ISBNNET_RESOLVER_SECRET.
 # Production: set the backend's ISBNNET_RESOLVER_SECRET and deploy it first,
-# then: wrangler secret put RESOLVER_SECRET
-RESOLVER_SECRET=
+# then: wrangler secret put ISBNNET_RESOLVER_SECRET
+ISBNNET_RESOLVER_SECRET=

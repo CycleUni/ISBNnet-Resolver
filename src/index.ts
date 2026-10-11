@@ -2,11 +2,11 @@ import { parseSearchResult, ParsedBook } from './parse';
 import { fetchIsbnNetHtml } from './fetchUpstream';
 
 export interface Env {
-  // Shared with the UniBooks backend, its only caller (set with `wrangler
-  // secret put RESOLVER_SECRET`). When set, an ISBN lookup must carry it in
-  // X-Resolver-Secret; unset, lookups stay open, so the backend can start
-  // sending it before the Worker starts requiring it.
-  RESOLVER_SECRET?: string;
+  // Shared with the UniBooks backend, its only caller, under the same name
+  // there (set here with `wrangler secret put ISBNNET_RESOLVER_SECRET`).
+  // When set, an ISBN lookup must carry it in X-Resolver-Secret; unset,
+  // lookups stay open, so the backend can start sending it first.
+  ISBNNET_RESOLVER_SECRET?: string;
 }
 
 /** Equal-length comparison that does not stop at the first differing byte. */
@@ -62,7 +62,7 @@ export default {
       // Without it anyone could use this Worker to send NCL a stream of
       // uncached lookups (each up to five upstream fetches) from Cloudflare's
       // addresses, and get those addresses blocked.
-      if (env.RESOLVER_SECRET && !secretMatches(request.headers.get('X-Resolver-Secret'), env.RESOLVER_SECRET)) {
+      if (env.ISBNNET_RESOLVER_SECRET && !secretMatches(request.headers.get('X-Resolver-Secret'), env.ISBNNET_RESOLVER_SECRET)) {
         return jsonResponse({ error: 'unauthorized' }, 401);
       }
 

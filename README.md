@@ -25,7 +25,7 @@ A standalone Cloudflare Worker microservice for the [UniBooks](https://github.co
 
 Exact ISBN-10 or ISBN-13 lookup. Hyphens (`-`) and whitespace in `:isbn` are automatically stripped, and check digits (`X`) are uppercased.
 
-When the Worker has a `RESOLVER_SECRET`, the request must send the same value in `X-Resolver-Secret`, or it gets `401 {"error": "unauthorized"}`. The UniBooks backend sends its `ISBNNET_RESOLVER_SECRET` there. `/health` stays open.
+When the Worker has an `ISBNNET_RESOLVER_SECRET`, the request must send the same value in `X-Resolver-Secret`, or it gets `401 {"error": "unauthorized"}`. The UniBooks backend sends its own `ISBNNET_RESOLVER_SECRET`, the same variable name on both sides. `/health` stays open.
 
 #### Success Response (`200 OK`)
 Cached in Cloudflare Workers Cache API for 30 days (`Cache-Control: public, max-age=2592000`).
@@ -116,7 +116,7 @@ The keys are listed in [`.dev.vars.example`](.dev.vars.example). For local dev, 
 
 | Key | Required | Purpose |
 |---|---|---|
-| `RESOLVER_SECRET` | No | When set, `/isbn/` lookups must send the same value in `X-Resolver-Secret`. Must match UniBooks-BE's `ISBNNET_RESOLVER_SECRET`. |
+| `ISBNNET_RESOLVER_SECRET` | No | When set, `/isbn/` lookups must send the same value in `X-Resolver-Secret`. Same name and value as UniBooks-BE's. |
 
 ### Run Locally with Wrangler
 ```bash
@@ -128,7 +128,7 @@ npx wrangler dev
 npx wrangler deploy
 ```
 
-To lock lookups to the backend, give it `ISBNNET_RESOLVER_SECRET` and deploy that first, then set the same value here:
+To lock lookups to the backend, set `ISBNNET_RESOLVER_SECRET` on the backend and deploy it first, then set the same value here:
 ```bash
-npx wrangler secret put RESOLVER_SECRET
+npx wrangler secret put ISBNNET_RESOLVER_SECRET
 ```

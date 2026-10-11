@@ -3,3 +3,7 @@ node_modules/
 dist/
 coverage/
 .DS_Store
+
+# Local secrets for wrangler dev; see .dev.vars.example
+.dev.vars
+.env

@@ -1,0 +1,15 @@
+# ISBNnet Resolver environment variable key list.
+# This file lists key names only — no real values.
+#
+# Wrangler doesn't read .env itself: for local dev, copy these keys into
+# .dev.vars (wrangler dev loads it automatically; it's gitignored).
+# In deployed environments, set secrets with `wrangler secret put <NAME>` —
+# never write them to a file.
+
+# ---- Optional (unset = lookups stay open to anyone) ----
+# Shared secret the UniBooks backend sends in the X-Resolver-Secret header.
+# When set, an /isbn/ lookup without the same value gets 401; /health stays
+# open. Must exactly match UniBooks-BE's ISBNNET_RESOLVER_SECRET.
+# Production: set the backend's ISBNNET_RESOLVER_SECRET and deploy it first,
+# then: wrangler secret put RESOLVER_SECRET
+RESOLVER_SECRET=

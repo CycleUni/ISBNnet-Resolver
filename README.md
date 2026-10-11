@@ -111,6 +111,13 @@ npm test
 npm run typecheck
 ```
 
+### Environment Variables
+The keys are listed in [`.dev.vars.example`](.dev.vars.example). For local dev, copy it to `.dev.vars` (gitignored), which `wrangler dev` loads. In production, set them with `wrangler secret put`.
+
+| Key | Required | Purpose |
+|---|---|---|
+| `RESOLVER_SECRET` | No | When set, `/isbn/` lookups must send the same value in `X-Resolver-Secret`. Must match UniBooks-BE's `ISBNNET_RESOLVER_SECRET`. |
+
 ### Run Locally with Wrangler
 ```bash
 npx wrangler dev

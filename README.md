@@ -70,6 +70,22 @@ Returned when upstream network requests, redirect chains, or parsing encounter u
 
 ---
 
+### 3. RPC (service bindings)
+`lookup(isbn: string): Promise<IsbnLookup>`
+
+The default export is a `WorkerEntrypoint`, so a Worker with a service binding to `isbnnet-resolver` (the UniBooks backend binds it as `ISBNNET`) calls `env.ISBNNET.lookup(isbn)` directly instead of building an HTTP request. It normalizes and validates the ISBN like `/isbn/:isbn` and shares its cache, and returns one of:
+
+```ts
+{ status: 'found', book: { title, authors, publisher, published_date, cover_url, isbn } }
+{ status: 'not_found' }
+{ status: 'invalid_isbn' }
+{ status: 'upstream_error' }
+```
+
+It needs no `X-Resolver-Secret`: only a service binding in the same Cloudflare account can reach an RPC method.
+
+---
+
 ## Cloudflare Cache Rules (Mandatory for Cost Protection)
 
 While this worker uses `caches.default` to cache valid and invalid responses programmatically, Cloudflare CDN does not automatically store these responses to bypass Worker invocation. To prevent malicious bots or high-volume scraping from exhausting your Worker invocation quota (even for cached 404 errors), you **must** configure a Cache Rule in the Cloudflare Dashboard:
@@ -89,7 +105,7 @@ This configuration ensures that Cloudflare's outermost CDN edge respects the `Ca
 
 - **[`src/parse.ts`](src/parse.ts)**: Pure Cheerio-based parser (`parseSearchResult(html, requestedIsbn)`) that extracts metadata from raw HTML. Contains zero network dependencies for easy unit testing.
 - **[`src/fetchUpstream.ts`](src/fetchUpstream.ts)**: Multi-hop redirect fetcher with session cookie preservation and timeouts (~8s via `AbortController`).
-- **[`src/index.ts`](src/index.ts)**: Worker entrypoint handling routing, ISBN normalization & validation, and edge caching with `caches.default`.
+- **[`src/index.ts`](src/index.ts)**: Worker entrypoint (`WorkerEntrypoint`: the HTTP routes and the `lookup` RPC method), ISBN normalization & validation, and edge caching with `caches.default`.
 - **[`test/parse.test.ts`](test/parse.test.ts)**: Vitest unit tests verifying parser functionality against real HTML snapshots in `test/fixtures/`.
 
 ---

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import worker from '../src/index';
+import IsbnnetResolver, { Env } from '../src/index';
 import { fetchIsbnNetHtml } from '../src/fetchUpstream';
 
 vi.mock('../src/fetchUpstream', () => ({ fetchIsbnNetHtml: vi.fn() }));
@@ -10,10 +10,10 @@ const upstream = vi.mocked(fetchIsbnNetHtml);
 // and ctx.waitUntil is never reached. That is what makes the handler testable
 // here at all, without standing up workerd.
 const ctx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
-const env = {};
+const resolver = (env: Env = {}) => new IsbnnetResolver(ctx, env);
 
 const call = (path: string, init?: RequestInit) =>
-  worker.fetch(new Request(`https://resolver.example${path}`, init), env, ctx);
+  resolver().fetch(new Request(`https://resolver.example${path}`, init));
 
 const FOUND_HTML = `<html><body>
   <div class="text-right-ISBN">找到 1 筆</div>
@@ -150,7 +150,7 @@ describe('lookup', () => {
 describe('shared secret', () => {
   const locked = { ISBNNET_RESOLVER_SECRET: 'resolver-test-secret' };
   const lookup = (headers?: Record<string, string>) =>
-    worker.fetch(new Request('https://resolver.example/isbn/9786264048668', { headers }), locked, ctx);
+    resolver(locked).fetch(new Request('https://resolver.example/isbn/9786264048668', { headers }));
 
   it('refuses a lookup without the secret once one is set', async () => {
     const res = await lookup();
@@ -170,8 +170,36 @@ describe('shared secret', () => {
   });
 
   it('keeps the health check open', async () => {
-    const res = await worker.fetch(new Request('https://resolver.example/health'), locked, ctx);
+    const res = await resolver(locked).fetch(new Request('https://resolver.example/health'));
     expect(res.status).toBe(200);
+  });
+});
+
+describe('RPC lookup', () => {
+  it('returns the parsed book', async () => {
+    upstream.mockResolvedValue(FOUND_HTML);
+    const result = await resolver().lookup('978-957-12-3456-7');
+    expect(result).toMatchObject({ status: 'found', book: { title: '測試書', isbn: '9789571234567' } });
+    expect(upstream).toHaveBeenLastCalledWith('9789571234567');
+  });
+
+  it('tells a missing book from an upstream failure', async () => {
+    upstream.mockResolvedValue(EMPTY_HTML);
+    await expect(resolver().lookup('9789571234567')).resolves.toEqual({ status: 'not_found' });
+
+    upstream.mockRejectedValue(new Error('ECONNRESET'));
+    await expect(resolver().lookup('9789571234567')).resolves.toEqual({ status: 'upstream_error' });
+  });
+
+  it('rejects an invalid ISBN without calling upstream', async () => {
+    await expect(resolver().lookup('123')).resolves.toEqual({ status: 'invalid_isbn' });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('needs no secret: only a service binding can call it', async () => {
+    upstream.mockResolvedValue(FOUND_HTML);
+    const result = await resolver({ ISBNNET_RESOLVER_SECRET: 'resolver-test-secret' }).lookup('9789571234567');
+    expect(result.status).toBe('found');
   });
 });
 

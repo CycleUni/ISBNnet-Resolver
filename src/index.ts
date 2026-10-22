@@ -1,11 +1,13 @@
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import { parseSearchResult, ParsedBook } from './parse';
 import { fetchIsbnNetHtml } from './fetchUpstream';
 
 export interface Env {
   // Shared with the UniBooks backend, its only caller, under the same name
   // there (set here with `wrangler secret put ISBNNET_RESOLVER_SECRET`).
-  // When set, an ISBN lookup must carry it in X-Resolver-Secret; unset,
-  // lookups stay open, so the backend can start sending it first.
+  // When set, an HTTP lookup must carry it in X-Resolver-Secret; unset,
+  // lookups stay open, so the backend can start sending it first. The RPC
+  // lookup() needs none: only a service binding in this account can reach it.
   ISBNNET_RESOLVER_SECRET?: string;
 }
 
@@ -42,8 +44,93 @@ function isValidIsbn(isbn: string): boolean {
   return /^\d{9}[\dX]$/.test(isbn) || /^\d{13}$/.test(isbn);
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+/** What one lookup came to; the HTTP route maps each to a status code. */
+export type IsbnLookup =
+  | { status: 'found'; book: ParsedBook }
+  | { status: 'not_found' }
+  | { status: 'invalid_isbn' }
+  | { status: 'upstream_error' };
+
+/** The response the HTTP route sends, and the form a lookup is cached in. */
+function lookupResponse(result: IsbnLookup): Response {
+  switch (result.status) {
+    case 'found':
+      return jsonResponse(result.book, 200, CACHE_TTL_FOUND);
+    case 'not_found':
+      return jsonResponse({ error: 'not_found' }, 404, CACHE_TTL_NOT_FOUND);
+    case 'invalid_isbn':
+      return jsonResponse({ error: 'invalid_isbn' }, 404, 86400);
+    case 'upstream_error':
+      return jsonResponse({ error: 'upstream_error' }, 502);
+  }
+}
+
+async function cachedLookup(cached: Response): Promise<IsbnLookup> {
+  if (cached.status === 200) return { status: 'found', book: (await cached.json()) as ParsedBook };
+  return { status: 'not_found' };
+}
+
+/** Strips separators and upper-cases the check digit; null when no valid ISBN is left. */
+function normalizeIsbn(raw: string): string | null {
+  const isbn = raw.replace(/[-\s]/g, '').toUpperCase();
+  return isValidIsbn(isbn) ? isbn : null;
+}
+
+/**
+ * One lookup of a normalized ISBN, through the edge cache. Both the HTTP route
+ * and the RPC method come here, so they share one cache: keyed by `origin`,
+ * the host the HTTP route was called on, or a fixed one for RPC.
+ */
+async function resolveIsbn(isbn: string, origin: string, ctx: ExecutionContext): Promise<IsbnLookup> {
+  // Cache lookup using Cloudflare Workers Cache API
+  const cacheKey = new Request(new URL(`/isbn/${isbn}`, origin).toString(), { method: 'GET' });
+  const cache = typeof caches !== 'undefined' && caches.default ? caches.default : null;
+
+  if (cache) {
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+      return cachedLookup(cachedResponse);
+    }
+  }
+
+  let html: string;
+  try {
+    html = await fetchIsbnNetHtml(isbn);
+  } catch (err) {
+    console.error(`Upstream fetch error for ISBN ${isbn}:`, err);
+    return { status: 'upstream_error' };
+  }
+
+  let book: ParsedBook | null;
+  try {
+    book = parseSearchResult(html, isbn);
+  } catch (err) {
+    console.error(`HTML parse error for ISBN ${isbn}:`, err);
+    return { status: 'upstream_error' };
+  }
+
+  const result: IsbnLookup = book ? { status: 'found', book } : { status: 'not_found' };
+  if (cache) {
+    ctx.waitUntil(cache.put(cacheKey, lookupResponse(result)));
+  }
+  return result;
+}
+
+/** The cache host for RPC lookups, which come with no request URL of their own. */
+const RPC_ORIGIN = 'https://isbnnet-resolver';
+
+export default class IsbnnetResolver extends WorkerEntrypoint<Env> {
+  /**
+   * RPC for a service binding (the UniBooks backend): `env.ISBNNET.lookup(isbn)`.
+   * Takes the ISBN as the HTTP route does, separators and all.
+   */
+  async lookup(isbn: string): Promise<IsbnLookup> {
+    const normalizedIsbn = normalizeIsbn(String(isbn));
+    if (!normalizedIsbn) return { status: 'invalid_isbn' };
+    return resolveIsbn(normalizedIsbn, RPC_ORIGIN, this.ctx);
+  }
+
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
@@ -62,7 +149,8 @@ export default {
       // Without it anyone could use this Worker to send NCL a stream of
       // uncached lookups (each up to five upstream fetches) from Cloudflare's
       // addresses, and get those addresses blocked.
-      if (env.ISBNNET_RESOLVER_SECRET && !secretMatches(request.headers.get('X-Resolver-Secret'), env.ISBNNET_RESOLVER_SECRET)) {
+      const secret = this.env.ISBNNET_RESOLVER_SECRET;
+      if (secret && !secretMatches(request.headers.get('X-Resolver-Secret'), secret)) {
         return jsonResponse({ error: 'unauthorized' }, 401);
       }
 
@@ -71,57 +159,16 @@ export default {
         rawIsbnParam = decodeURIComponent(isbnMatch[1]);
       } catch {
         // A malformed % escape: no ISBN in it, so the same answer as any other.
-        return jsonResponse({ error: 'invalid_isbn' }, 404, 86400);
+        return lookupResponse({ status: 'invalid_isbn' });
       }
-      const normalizedIsbn = rawIsbnParam.replace(/[-\s]/g, '').toUpperCase();
-
-      if (!isValidIsbn(normalizedIsbn)) {
-        return jsonResponse({ error: 'invalid_isbn' }, 404, 86400);
-      }
-
-      // Cache lookup using Cloudflare Workers Cache API
-      const normalizedUrl = new URL(`/isbn/${normalizedIsbn}`, request.url).toString();
-      const cacheKey = new Request(normalizedUrl, { method: 'GET' });
-      const cache = typeof caches !== 'undefined' && caches.default ? caches.default : null;
-
-      if (cache) {
-        const cachedResponse = await cache.match(cacheKey);
-        if (cachedResponse) {
-          return cachedResponse;
-        }
+      const normalizedIsbn = normalizeIsbn(rawIsbnParam);
+      if (!normalizedIsbn) {
+        return lookupResponse({ status: 'invalid_isbn' });
       }
 
-      let html: string;
-      try {
-        html = await fetchIsbnNetHtml(normalizedIsbn);
-      } catch (err) {
-        console.error(`Upstream fetch error for ISBN ${normalizedIsbn}:`, err);
-        return jsonResponse({ error: 'upstream_error' }, 502);
-      }
-
-      let book: ParsedBook | null;
-      try {
-        book = parseSearchResult(html, normalizedIsbn);
-      } catch (err) {
-        console.error(`HTML parse error for ISBN ${normalizedIsbn}:`, err);
-        return jsonResponse({ error: 'upstream_error' }, 502);
-      }
-
-      if (!book) {
-        const notFoundResponse = jsonResponse({ error: 'not_found' }, 404, CACHE_TTL_NOT_FOUND);
-        if (cache) {
-          ctx.waitUntil(cache.put(cacheKey, notFoundResponse.clone()));
-        }
-        return notFoundResponse;
-      }
-
-      const successResponse = jsonResponse(book, 200, CACHE_TTL_FOUND);
-      if (cache) {
-        ctx.waitUntil(cache.put(cacheKey, successResponse.clone()));
-      }
-      return successResponse;
+      return lookupResponse(await resolveIsbn(normalizedIsbn, request.url, this.ctx));
     }
 
     return jsonResponse({ error: 'not_found' }, 404, 86400);
-  },
-};
+  }
+}

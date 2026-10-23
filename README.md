@@ -28,7 +28,7 @@ Exact ISBN-10 or ISBN-13 lookup. Hyphens (`-`) and whitespace in `:isbn` are aut
 When the Worker has an `ISBNNET_RESOLVER_SECRET`, the request must send the same value in `X-Resolver-Secret`, or it gets `401 {"error": "unauthorized"}`. The UniBooks backend sends its own `ISBNNET_RESOLVER_SECRET`, the same variable name on both sides. `/health` stays open.
 
 #### Success Response (`200 OK`)
-Cached in Cloudflare Workers Cache API for 30 days (`Cache-Control: public, max-age=2592000`).
+Kept in Workers Cache for 30 days (`Cache-Control: public, max-age=2592000`).
 
 ```json
 {
@@ -73,7 +73,7 @@ Returned when upstream network requests, redirect chains, or parsing encounter u
 ### 3. RPC (service bindings)
 `lookup(isbn: string): Promise<IsbnLookup>`
 
-The default export is a `WorkerEntrypoint`, so a Worker with a service binding to `isbnnet-resolver` (the UniBooks backend binds it as `ISBNNET`) calls `env.ISBNNET.lookup(isbn)` directly instead of building an HTTP request. It normalizes and validates the ISBN like `/isbn/:isbn` and shares its cache, and returns one of:
+The default export is a `WorkerEntrypoint`, so a Worker with a service binding to `isbnnet-resolver` (the UniBooks backend binds it as `ISBNNET`) calls `env.ISBNNET.lookup(isbn)` directly instead of building an HTTP request. It normalizes and validates the ISBN like `/isbn/:isbn` and shares its cache (see [Caching](#caching-workers-cache)), and returns one of:
 
 ```ts
 { status: 'found', book: { title, authors, publisher, published_date, cover_url, isbn } }
@@ -86,18 +86,17 @@ It needs no `X-Resolver-Secret`: only a service binding in the same Cloudflare a
 
 ---
 
-## Cloudflare Cache Rules (Mandatory for Cost Protection)
+## Caching (Workers Cache)
 
-While this worker uses `caches.default` to cache valid and invalid responses programmatically, Cloudflare CDN does not automatically store these responses to bypass Worker invocation. To prevent malicious bots or high-volume scraping from exhausting your Worker invocation quota (even for cached 404 errors), you **must** configure a Cache Rule in the Cloudflare Dashboard:
+Lookups are cached by [Workers Cache](https://developers.cloudflare.com/workers/cache/), configured in [`wrangler.toml`](wrangler.toml). It only stores `fetch()` calls, never RPC, so both `GET /isbn/:isbn` and `lookup()` normalize the ISBN and then loop back through `ctx.exports` to `GET /isbn/<normalized ISBN>` on the `CachedLookup` entrypoint — the only one with caching on. One ISBN is therefore one cache entry whichever way it was asked:
 
-1. Go to your Cloudflare Dashboard for the domain bound to this worker.
-2. Navigate to **Caching** → **Cache Rules**.
-3. Create a new rule: `Cache ISBNnet Resolver`
-4. Set the condition: `URI Path` `starts with` `/isbn/`
-5. Set Cache eligibility to: `Eligible for cache`
-6. Set Edge TTL to: `Use cache-control header if present`
+- A hit is answered without running `CachedLookup` at all, so ISBN-net is not contacted; the Cache-Control TTLs above decide how long. `upstream_error` (`no-store`) is never kept.
+- Concurrent misses for the same ISBN in a data center are collapsed into one upstream lookup, and a lower/upper cache tier is shared across locations.
+- When a stale entry's refresh fails upstream, Cloudflare keeps serving the stale answer.
+- The default entrypoint (secret check, `/health`, the RPC method) is uncached and runs on every call.
+- The Worker version is part of the cache key, so each deploy starts from an empty cache. Purge with `ctx.cache.purge()` if a cached answer must go sooner.
 
-This configuration ensures that Cloudflare's outermost CDN edge respects the `Cache-Control` headers emitted by this worker, completely bypassing worker invocation on subsequent identical requests.
+`wrangler dev` does not emulate Workers Cache; check `Cf-Cache-Status` on a deployed lookup instead. With caching on, each loopback call to `CachedLookup` is billed as a request, where a worker-to-worker call is otherwise free.
 
 ---
 
@@ -105,7 +104,7 @@ This configuration ensures that Cloudflare's outermost CDN edge respects the `Ca
 
 - **[`src/parse.ts`](src/parse.ts)**: Pure Cheerio-based parser (`parseSearchResult(html, requestedIsbn)`) that extracts metadata from raw HTML. Contains zero network dependencies for easy unit testing.
 - **[`src/fetchUpstream.ts`](src/fetchUpstream.ts)**: Multi-hop redirect fetcher with session cookie preservation and timeouts (~8s via `AbortController`).
-- **[`src/index.ts`](src/index.ts)**: Worker entrypoint (`WorkerEntrypoint`: the HTTP routes and the `lookup` RPC method), ISBN normalization & validation, and edge caching with `caches.default`.
+- **[`src/index.ts`](src/index.ts)**: Worker entrypoint (`WorkerEntrypoint`: the HTTP routes and the `lookup` RPC method), the `CachedLookup` entrypoint Workers Cache sits in front of, and ISBN normalization & validation.
 - **[`test/parse.test.ts`](test/parse.test.ts)**: Vitest unit tests verifying parser functionality against real HTML snapshots in `test/fixtures/`.
 
 ---

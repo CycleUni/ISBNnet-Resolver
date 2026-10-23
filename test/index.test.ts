@@ -1,15 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import IsbnnetResolver, { Env } from '../src/index';
+import IsbnnetResolver, { CachedLookup, Env } from '../src/index';
 import { fetchIsbnNetHtml } from '../src/fetchUpstream';
 
 vi.mock('../src/fetchUpstream', () => ({ fetchIsbnNetHtml: vi.fn() }));
 const upstream = vi.mocked(fetchIsbnNetHtml);
 
-// `caches` is a Workers global with no node equivalent, and index.ts guards on
-// `typeof caches !== 'undefined'` — so under vitest the cache path is skipped
-// and ctx.waitUntil is never reached. That is what makes the handler testable
-// here at all, without standing up workerd.
-const ctx = { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
+// Workers Cache runs in front of CachedLookup only in workerd; here
+// ctx.exports calls the entrypoint straight, so every lookup reaches it.
+const loopback = vi.fn((url: string) => new CachedLookup(ctx, {}).fetch(new Request(url)));
+const ctx = {
+  waitUntil: vi.fn(),
+  passThroughOnException: vi.fn(),
+  exports: { CachedLookup: { fetch: loopback } },
+} as unknown as ExecutionContext;
 const resolver = (env: Env = {}) => new IsbnnetResolver(ctx, env);
 
 const call = (path: string, init?: RequestInit) =>
@@ -32,6 +35,7 @@ const EMPTY_HTML = '<div class="text-right-ISBN">找到 0 筆</div>';
 
 beforeEach(() => {
   upstream.mockReset();
+  loopback.mockClear();
 });
 
 describe('routing', () => {
@@ -200,6 +204,35 @@ describe('RPC lookup', () => {
     upstream.mockResolvedValue(FOUND_HTML);
     const result = await resolver({ ISBNNET_RESOLVER_SECRET: 'resolver-test-secret' }).lookup('9789571234567');
     expect(result.status).toBe('found');
+  });
+});
+
+describe('cached entrypoint', () => {
+  it('sends the HTTP route and the RPC through one cache key per ISBN', async () => {
+    upstream.mockResolvedValue(EMPTY_HTML);
+    await call(`/isbn/${encodeURIComponent('978-957-12-3456-7')}`);
+    await resolver().lookup('978 957 12 3456 7');
+    expect(loopback.mock.calls.map(([url]) => url)).toEqual([
+      'https://isbnnet-resolver/isbn/9789571234567',
+      'https://isbnnet-resolver/isbn/9789571234567',
+    ]);
+  });
+
+  it('keeps invalid ISBNs away from the cache', async () => {
+    await call('/isbn/123');
+    await resolver().lookup('123');
+    expect(loopback).not.toHaveBeenCalled();
+  });
+
+  it('answers only a normalized ISBN, so one book is one cache entry', async () => {
+    const lookup = (path: string, init?: RequestInit) =>
+      new CachedLookup(ctx, {}).fetch(new Request(`https://isbnnet-resolver${path}`, init));
+    for (const res of [await lookup('/isbn/978-957-12-3456-7'), await lookup('/isbn/012345678x'), await lookup('/health')]) {
+      expect(res.status).toBe(404);
+      await expect(res.json()).resolves.toEqual({ error: 'invalid_isbn' });
+    }
+    expect((await lookup('/isbn/9789571234567', { method: 'POST' })).status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
   });
 });
 

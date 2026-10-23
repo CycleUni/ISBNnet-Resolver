@@ -51,7 +51,7 @@ export type IsbnLookup =
   | { status: 'invalid_isbn' }
   | { status: 'upstream_error' };
 
-/** The response the HTTP route sends, and the form a lookup is cached in. */
+/** The response the HTTP route sends, and the form Workers Cache keeps a lookup in. */
 function lookupResponse(result: IsbnLookup): Response {
   switch (result.status) {
     case 'found':
@@ -65,9 +65,14 @@ function lookupResponse(result: IsbnLookup): Response {
   }
 }
 
-async function cachedLookup(cached: Response): Promise<IsbnLookup> {
-  if (cached.status === 200) return { status: 'found', book: (await cached.json()) as ParsedBook };
-  return { status: 'not_found' };
+/** Reads a lookupResponse back into the lookup it was made from. */
+async function responseLookup(res: Response): Promise<IsbnLookup> {
+  if (res.status === 200) return { status: 'found', book: (await res.json()) as ParsedBook };
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { status: body?.error === 'invalid_isbn' ? 'invalid_isbn' : 'not_found' };
+  }
+  return { status: 'upstream_error' };
 }
 
 /** Strips separators and upper-cases the check digit; null when no valid ISBN is left. */
@@ -76,23 +81,8 @@ function normalizeIsbn(raw: string): string | null {
   return isValidIsbn(isbn) ? isbn : null;
 }
 
-/**
- * One lookup of a normalized ISBN, through the edge cache. Both the HTTP route
- * and the RPC method come here, so they share one cache: keyed by `origin`,
- * the host the HTTP route was called on, or a fixed one for RPC.
- */
-async function resolveIsbn(isbn: string, origin: string, ctx: ExecutionContext): Promise<IsbnLookup> {
-  // Cache lookup using Cloudflare Workers Cache API
-  const cacheKey = new Request(new URL(`/isbn/${isbn}`, origin).toString(), { method: 'GET' });
-  const cache = typeof caches !== 'undefined' && caches.default ? caches.default : null;
-
-  if (cache) {
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-      return cachedLookup(cachedResponse);
-    }
-  }
-
+/** One lookup of a normalized ISBN, straight from ISBN-net (Workers Cache sits in front of CachedLookup). */
+async function resolveIsbn(isbn: string): Promise<IsbnLookup> {
   let html: string;
   try {
     html = await fetchIsbnNetHtml(isbn);
@@ -109,25 +99,48 @@ async function resolveIsbn(isbn: string, origin: string, ctx: ExecutionContext):
     return { status: 'upstream_error' };
   }
 
-  const result: IsbnLookup = book ? { status: 'found', book } : { status: 'not_found' };
-  if (cache) {
-    ctx.waitUntil(cache.put(cacheKey, lookupResponse(result)));
-  }
-  return result;
+  return book ? { status: 'found', book } : { status: 'not_found' };
 }
 
-/** The cache host for RPC lookups, which come with no request URL of their own. */
-const RPC_ORIGIN = 'https://isbnnet-resolver';
+/**
+ * The lookup of a normalized ISBN, through Workers Cache: a loopback fetch to
+ * CachedLookup, the one entrypoint wrangler.toml turns caching on for. Workers
+ * Cache only stores fetch() calls, never RPC, so the HTTP route and lookup()
+ * both come here and share one cache, keyed by the path (the host is a
+ * placeholder and not part of the key). Concurrent misses for one ISBN are
+ * collapsed into a single upstream lookup.
+ */
+function cachedResponse(ctx: ExecutionContext, isbn: string): Promise<Response> {
+  const { CachedLookup } = ctx.exports as unknown as { CachedLookup: Fetcher };
+  return CachedLookup.fetch(`https://isbnnet-resolver/isbn/${isbn}`);
+}
+
+/**
+ * Answers `GET /isbn/<normalized ISBN>` from ISBN-net, with the Cache-Control
+ * lookupResponse sets; Cloudflare keeps the answer and serves repeats without
+ * running this. Not routed from the internet: only ctx.exports (and service
+ * bindings in this account) reach a named entrypoint, so it needs no secret.
+ */
+export class CachedLookup extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    const match = new URL(request.url).pathname.match(/^\/isbn\/([^/]+)$/);
+    const isbn = match ? normalizeIsbn(match[1]) : null;
+    // Callers send an ISBN already normalized; anything else would be a second cache entry for it.
+    if (request.method !== 'GET' || !isbn || isbn !== match?.[1]) return lookupResponse({ status: 'invalid_isbn' });
+    return lookupResponse(await resolveIsbn(isbn));
+  }
+}
 
 export default class IsbnnetResolver extends WorkerEntrypoint<Env> {
   /**
    * RPC for a service binding (the UniBooks backend): `env.ISBNNET.lookup(isbn)`.
-   * Takes the ISBN as the HTTP route does, separators and all.
+   * Takes the ISBN as the HTTP route does, separators and all. The method
+   * itself always runs (RPC is never cached); the lookup behind it is.
    */
   async lookup(isbn: string): Promise<IsbnLookup> {
     const normalizedIsbn = normalizeIsbn(String(isbn));
     if (!normalizedIsbn) return { status: 'invalid_isbn' };
-    return resolveIsbn(normalizedIsbn, RPC_ORIGIN, this.ctx);
+    return responseLookup(await cachedResponse(this.ctx, normalizedIsbn));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -166,7 +179,7 @@ export default class IsbnnetResolver extends WorkerEntrypoint<Env> {
         return lookupResponse({ status: 'invalid_isbn' });
       }
 
-      return lookupResponse(await resolveIsbn(normalizedIsbn, request.url, this.ctx));
+      return cachedResponse(this.ctx, normalizedIsbn);
     }
 
     return jsonResponse({ error: 'not_found' }, 404, 86400);

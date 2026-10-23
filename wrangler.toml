@@ -1,3 +1,14 @@
 name = "isbnnet-resolver"
 main = "src/index.ts"
 compatibility_date = "2024-04-05" # RPC (WorkerEntrypoint) needs 2024-04-03 or later
+# ctx.exports: every lookup loops back through the CachedLookup entrypoint.
+compatibility_flags = ["enable_ctx_exports"]
+
+# Workers Cache in front of CachedLookup only, which keeps each answer for its
+# Cache-Control max-age. The default entrypoint (HTTP routes with the secret
+# check, and the lookup() RPC) is left uncached so it runs on every request.
+[exports.CachedLookup]
+type = "worker"
+
+  [exports.CachedLookup.cache]
+  enabled = true

@@ -143,6 +143,8 @@ npx wrangler dev
 npx wrangler deploy
 ```
 
+`wrangler.toml` turns off the `workers.dev` and preview URLs, so the deployed Worker has no public address: only a service binding in the same account (the UniBooks backend's `ISBNNET`) reaches it. To call `/isbn/` over HTTPS, give it a route or turn `workers_dev` back on, and set `ISBNNET_RESOLVER_SECRET` first.
+
 To lock lookups to the backend, set `ISBNNET_RESOLVER_SECRET` on the backend and deploy it first, then set the same value here:
 ```bash
 npx wrangler secret put ISBNNET_RESOLVER_SECRET

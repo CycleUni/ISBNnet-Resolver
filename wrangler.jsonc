@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "isbnnet-resolver",
+  "main": "src/index.ts",
+  // RPC (WorkerEntrypoint) needs 2024-04-03 or later
+  "compatibility_date": "2024-04-05",
+  // ctx.exports: every lookup loops back through the CachedLookup entrypoint.
+  "compatibility_flags": ["enable_ctx_exports"],
+
+  // No public URL: the UniBooks backend reaches this Worker only through its
+  // service binding, so neither workers.dev nor per-version preview URLs exist.
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // Workers Cache in front of CachedLookup only, which keeps each answer for its
+  // Cache-Control max-age. The default entrypoint (HTTP routes with the secret
+  // check, and the lookup() RPC) is left uncached so it runs on every request.
+  "exports": {
+    "CachedLookup": {
+      "type": "worker",
+      "cache": { "enabled": true }
+    }
+  },
+
+  "observability": {
+    "logs": {
+      "enabled": false,
+      "invocation_logs": true
+    }
+  }
+}

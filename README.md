@@ -88,7 +88,7 @@ It needs no `X-Resolver-Secret`: only a service binding in the same Cloudflare a
 
 ## Caching (Workers Cache)
 
-Lookups are cached by [Workers Cache](https://developers.cloudflare.com/workers/cache/), configured in [`wrangler.toml`](wrangler.toml). It only stores `fetch()` calls, never RPC, so both `GET /isbn/:isbn` and `lookup()` normalize the ISBN and then loop back through `ctx.exports` to `GET /isbn/<normalized ISBN>` on the `CachedLookup` entrypoint — the only one with caching on. One ISBN is therefore one cache entry whichever way it was asked:
+Lookups are cached by [Workers Cache](https://developers.cloudflare.com/workers/cache/), configured in [`wrangler.jsonc`](wrangler.jsonc). It only stores `fetch()` calls, never RPC, so both `GET /isbn/:isbn` and `lookup()` normalize the ISBN and then loop back through `ctx.exports` to `GET /isbn/<normalized ISBN>` on the `CachedLookup` entrypoint — the only one with caching on. One ISBN is therefore one cache entry whichever way it was asked:
 
 - A hit is answered without running `CachedLookup` at all, so ISBN-net is not contacted; the Cache-Control TTLs above decide how long. `upstream_error` (`no-store`) is never kept.
 - Concurrent misses for the same ISBN in a data center are collapsed into one upstream lookup, and a lower/upper cache tier is shared across locations.
@@ -143,7 +143,7 @@ npx wrangler dev
 npx wrangler deploy
 ```
 
-`wrangler.toml` turns off the `workers.dev` and preview URLs, so the deployed Worker has no public address: only a service binding in the same account (the UniBooks backend's `ISBNNET`) reaches it. To call `/isbn/` over HTTPS, give it a route or turn `workers_dev` back on, and set `ISBNNET_RESOLVER_SECRET` first.
+`wrangler.jsonc` turns off the `workers.dev` and preview URLs, so the deployed Worker has no public address: only a service binding in the same account (the UniBooks backend's `ISBNNET`) reaches it. To call `/isbn/` over HTTPS, give it a route or turn `workers_dev` back on, and set `ISBNNET_RESOLVER_SECRET` first.
 
 To lock lookups to the backend, set `ISBNNET_RESOLVER_SECRET` on the backend and deploy it first, then set the same value here:
 ```bash

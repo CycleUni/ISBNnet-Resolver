@@ -104,7 +104,7 @@ async function resolveIsbn(isbn: string): Promise<IsbnLookup> {
 
 /**
  * The lookup of a normalized ISBN, through Workers Cache: a loopback fetch to
- * CachedLookup, the one entrypoint wrangler.toml turns caching on for. Workers
+ * CachedLookup, the one entrypoint wrangler.jsonc turns caching on for. Workers
  * Cache only stores fetch() calls, never RPC, so the HTTP route and lookup()
  * both come here and share one cache, keyed by the path (the host is a
  * placeholder and not part of the key). Concurrent misses for one ISBN are
